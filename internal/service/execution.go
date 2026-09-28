@@ -84,6 +84,9 @@ func (runtime *Runtime) loadRollOperation(current model.Job) error {
 	if err := runtime.jobs.Put(updated); err != nil {
 		return err
 	}
+	if _, err := journal.PersistJobSnapshot(runtime.journal, updated, model.NewOperationID(), "job_snapshot", now); err != nil {
+		return err
+	}
 	return runtime.webControl.Prepare(string(updated.ID), updated.Generation, updated.RollGeneration)
 }
 
@@ -169,7 +172,14 @@ func (runtime *Runtime) registerOperation(current model.Job) error {
 		return err
 	}
 	current.PlateGeneration = plateGeneration
+	plate, _, _, _ := runtime.press.Snapshot()
+	if _, err := journal.PersistPlateChange(runtime.journal, current, model.NewOperationID(), plate, plateGeneration, now); err != nil {
+		return err
+	}
 	if err := runtime.register.Start(current.Generation, plateGeneration, 0, now); err != nil {
+		return err
+	}
+	if _, err := journal.PersistRegisterWindow(runtime.journal, current, model.NewOperationID(), journal.RegisterWindowRecord{JobGeneration: current.Generation, PlateGeneration: plateGeneration}, now); err != nil {
 		return err
 	}
 	frame := sensor.CameraFrame{ID: string(model.NewOperationID()), Camera: "register-camera", JobGeneration: current.Generation, PlateGeneration: plateGeneration, WebMeter: 1, Offset: 0.04, CapturedAt: now, ReceivedAt: now.Add(time.Millisecond)}
@@ -230,6 +240,7 @@ func (runtime *Runtime) switchInkOperation(withFault bool) error {
 }
 
 func (runtime *Runtime) startDryerOperation(ctx context.Context, current model.Job) error {
+	now := time.Now()
 	profile := dryer.Profile{Name: "production", Zones: []dryer.Zone{{Name: "entry", Temperature: 80, Airflow: 20}, {Name: "exit", Temperature: 100, Airflow: 24}}}
 	if profile.MaximumTemperature() <= 0 || profile.AverageAirflow() <= 0 {
 		return fmt.Errorf("dryer profile is invalid")
@@ -238,6 +249,9 @@ func (runtime *Runtime) startDryerOperation(ctx context.Context, current model.J
 		return err
 	}
 	if err := runtime.jobControl.StartDryerRamp(ctx, current, profile.MaximumTemperature(), 10*time.Millisecond); err != nil {
+		return err
+	}
+	if _, err := journal.PersistDryerStarted(runtime.journal, current, model.NewOperationID(), profile.MaximumTemperature(), profile.Name, now); err != nil {
 		return err
 	}
 	_ = runtime.jobControl.DryerTemperature()

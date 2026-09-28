@@ -48,3 +48,49 @@ func PersistFence(store *Store, job model.Job, operation model.OperationID, owne
 	}
 	return store.Append(event)
 }
+
+func PersistJobSnapshot(store *Store, job model.Job, operation model.OperationID, kind string, now time.Time) (uint64, error) {
+	if kind != "job_created" && kind != "job_snapshot" {
+		return 0, fmt.Errorf("unsupported job snapshot kind %q", kind)
+	}
+	event, err := model.NewEvent(operation, job, kind, job, now)
+	if err != nil {
+		return 0, err
+	}
+	return store.Append(event)
+}
+
+func PersistPlateChange(store *Store, job model.Job, operation model.OperationID, plate string, plateGeneration uint64, now time.Time) (uint64, error) {
+	if plate == "" || plateGeneration == 0 {
+		return 0, fmt.Errorf("plate change identity is incomplete")
+	}
+	payload := map[string]any{"plate": plate, "plate_generation": plateGeneration}
+	event, err := model.NewEvent(operation, job, "plate_changed", payload, now)
+	if err != nil {
+		return 0, err
+	}
+	return store.Append(event)
+}
+
+func PersistDryerStarted(store *Store, job model.Job, operation model.OperationID, target float64, profile string, now time.Time) (uint64, error) {
+	if target < 0 || profile == "" {
+		return 0, fmt.Errorf("dryer start record is incomplete")
+	}
+	payload := map[string]any{"target": target, "profile": profile}
+	event, err := model.NewEvent(operation, job, "dryer_started", payload, now)
+	if err != nil {
+		return 0, err
+	}
+	return store.Append(event)
+}
+
+func PersistRegisterWindow(store *Store, job model.Job, operation model.OperationID, window RegisterWindowRecord, now time.Time) (uint64, error) {
+	if window.JobGeneration == 0 || window.PlateGeneration == 0 {
+		return 0, fmt.Errorf("register window record is incomplete")
+	}
+	event, err := model.NewEvent(operation, job, "register_window_opened", window, now)
+	if err != nil {
+		return 0, err
+	}
+	return store.Append(event)
+}

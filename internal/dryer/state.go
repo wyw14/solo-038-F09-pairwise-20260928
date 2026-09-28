@@ -65,6 +65,26 @@ func (state *State) Snapshot() (string, uint64, float64, float64, string, bool) 
 	return state.jobID, state.jobGen, state.target, state.current, state.profile, state.active
 }
 
+// Restore installs the fenced dryer identity recovered after a restart. The
+// heater is always brought back inactive (active=false, current=0): a dryer
+// is a thermal actuator and must be re-ramped under operator control rather
+// than silently reheating on reboot.
+func (state *State) Restore(jobID string, generation uint64, target float64, profile string) error {
+	if jobID == "" || generation == 0 || target < 0 || profile == "" {
+		return fmt.Errorf("dryer recovery identity is incomplete")
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.jobID = jobID
+	state.jobGen = generation
+	state.target = target
+	state.current = 0
+	state.profile = profile
+	state.lastUpdated = time.Time{}
+	state.active = false
+	return nil
+}
+
 func Ramp(ctx context.Context, _ *State, _ string, _ uint64, target float64, step time.Duration, apply func(float64) error) <-chan error {
 	result := make(chan error, 1)
 	go func() {

@@ -12,6 +12,19 @@ type State struct {
 	lastFailure string
 }
 
+// Seed raises the issued/durable counters to a recovered high-water mark so
+// sequences issued after a restart never collide with pre-crash ones.
+func (state *State) Seed(sequence uint64) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if sequence > state.sequence {
+		state.sequence = sequence
+	}
+	if sequence > state.durable {
+		state.durable = sequence
+	}
+}
+
 func (state *State) Issued() uint64 {
 	state.mu.Lock()
 	defer state.mu.Unlock()

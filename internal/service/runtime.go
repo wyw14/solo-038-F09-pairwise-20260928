@@ -56,6 +56,8 @@ type Runtime struct {
 	splice          *splice.State
 	spliceControl   *splice.Coordinator
 	incidents       []Incident
+	restartReport   *RestartReport
+	recovered       bool
 }
 
 func NewRuntime(config Config) (*Runtime, error) {
@@ -95,11 +97,24 @@ func (runtime *Runtime) Start(ctx context.Context) error {
 		return ctx.Err()
 	default:
 	}
+	// Rebuild from the durable log before anything else. If evidence shows a
+	// previous run, the line comes back stopped with a per-item report instead
+	// of silently starting a fresh job on top of unknown equipment state.
+	report, err := runtime.restartRecoverLocked()
+	if err != nil {
+		return err
+	}
+	if report.RecoveredJob || report.ManualReviewNeeded {
+		return nil
+	}
 	if _, ok := runtime.jobs.Current(); !ok {
 		created := runtime.jobs.Create(time.Now())
 		created.RollGeneration = 1
 		created.PlateGeneration = 1
 		if err := runtime.jobs.Put(created); err != nil {
+			return err
+		}
+		if _, err := journal.PersistJobSnapshot(runtime.journal, created, model.NewOperationID(), "job_created", time.Now()); err != nil {
 			return err
 		}
 	}

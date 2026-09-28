@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wyw14/solo-038/internal/journal"
 	"github.com/wyw14/solo-038/internal/model"
 )
 
@@ -37,6 +38,33 @@ func (runtime *Runtime) SaveSnapshot() error {
 		return fmt.Errorf("there is no current job")
 	}
 	owner, jobGeneration, rollGeneration, threaded, meter := runtime.web.Snapshot()
-	values := map[string]any{"job": current, "web_owner": owner, "web_job_generation": jobGeneration, "web_roll_generation": rollGeneration, "web_threaded": threaded, "web_meter": meter}
+	plate, plateGeneration, color, phases := runtime.press.Snapshot()
+	window := runtime.register.Snapshot()
+	dryerJobID, dryerGeneration, dryerTarget, dryerCurrent, dryerProfile, dryerActive := runtime.dryer.Snapshot()
+	values := map[string]any{
+		"job":                    current,
+		"web_owner":              owner,
+		"web_job_generation":     jobGeneration,
+		"web_roll_generation":    rollGeneration,
+		"web_threaded":           threaded,
+		"web_meter":              meter,
+		"press_plate":            plate,
+		"press_plate_generation": plateGeneration,
+		"press_color":            color,
+		"press_phases":           phases,
+		"register_window": journal.RegisterWindowRecord{
+			JobGeneration:   window.JobGeneration,
+			PlateGeneration: window.PlateGeneration,
+			StartMeter:      window.StartMeter,
+			LastMeter:       window.LastMeter,
+			Samples:         window.Samples,
+		},
+		"dryer_job_id":      dryerJobID,
+		"dryer_generation":  dryerGeneration,
+		"dryer_target":      dryerTarget,
+		"dryer_profile":     dryerProfile,
+		"dryer_temperature": dryerCurrent,
+		"dryer_active":      dryerActive,
+	}
 	return runtimeSaveSnapshot(runtime.config.DataDir, values)
 }

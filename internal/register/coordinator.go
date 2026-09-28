@@ -48,15 +48,17 @@ func (coordinator *Coordinator) Release(job model.Job, operation model.Operation
 		return fmt.Errorf("register window is incomplete")
 	}
 	interval := model.Interval{JobID: job.ID, JobGeneration: job.Generation, RollGeneration: job.RollGeneration, StartMeter: window.StartMeter, EndMeter: window.LastMeter, OpenedAt: window.StartedAt, ClosedAt: now.UTC()}
-	record := journal.IntervalRecord{Interval: interval, Proofs: proofs, Released: false}
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
-	coordinator.released[job.ID] = record
+	// The release only becomes true once its event is durable: persist the
+	// released record so a power loss afterwards still proves the interval is
+	// safe to advance over.
+	record := journal.IntervalRecord{Interval: interval, Proofs: proofs, Released: true}
 	if _, err := journal.PersistInterval(coordinator.journal, job, operation, record, now); err != nil {
 		coordinator.lastError = err
+		coordinator.released[job.ID] = journal.IntervalRecord{Interval: interval, Proofs: proofs, Released: false}
 		return err
 	}
-	record.Released = true
 	coordinator.released[job.ID] = record
 	return nil
 }
@@ -72,4 +74,22 @@ func (coordinator *Coordinator) LastError() error {
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
 	return coordinator.lastError
+}
+
+// RestoreReleased rebuilds the release ledger from durable interval events
+// during restart recovery. Only intervals belonging to the recovered job and
+// its current generations are restored, so stale releases can never unlock
+// a newer roll/plate generation.
+func (coordinator *Coordinator) RestoreReleased(job model.Job, intervals []model.Interval) {
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	for _, interval := range intervals {
+		if interval.JobID != job.ID || interval.JobGeneration != job.Generation || interval.RollGeneration != job.RollGeneration {
+			continue
+		}
+		if existing, ok := coordinator.released[job.ID]; ok && existing.Released {
+			continue
+		}
+		coordinator.released[job.ID] = journal.IntervalRecord{Interval: interval, Released: true}
+	}
 }

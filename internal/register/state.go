@@ -67,3 +67,18 @@ func (state *State) Snapshot() Window {
 	defer state.mu.RUnlock()
 	return state.window
 }
+
+// Restore brings back a register window after a restart. The recovered
+// window is always marked invalid: the camera dwell is a live guarantee that
+// durable evidence cannot confirm, so frames must be re-acquired before the
+// window may release anything.
+func (state *State) Restore(record Window) error {
+	if record.JobGeneration == 0 || record.PlateGeneration == 0 {
+		return fmt.Errorf("register window generations are required")
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	record.Valid = false
+	state.window = record
+	return nil
+}

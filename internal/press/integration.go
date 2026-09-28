@@ -41,3 +41,21 @@ func RestorePhases(state *State, plate string, generation uint64, phases map[str
 	}
 	return nil
 }
+
+// Restore installs a fully fenced press state after a restart. Units are
+// returned stopped; the caller never re-enables them from recovery.
+func Restore(state *State, plate string, generation uint64, color string, phases map[string]float64) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if plate == "" || generation == 0 {
+		return fmt.Errorf("plate recovery identity is incomplete")
+	}
+	state.plate = plate
+	state.plateGeneration = generation
+	state.activeColor = color
+	state.phaseByUnit = map[string]float64{}
+	for unit, phase := range phases {
+		state.phaseByUnit[unit] = phase
+	}
+	return nil
+}
