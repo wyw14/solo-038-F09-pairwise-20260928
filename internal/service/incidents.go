@@ -2,6 +2,7 @@ package service
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,4 +33,18 @@ func (runtime *Runtime) Incidents() []Incident {
 	values := append([]Incident(nil), runtime.incidents...)
 	sort.Slice(values, func(left, right int) bool { return values[left].At.After(values[right].At) })
 	return values
+}
+
+// clearRecoveryIncidents removes incidents produced by an earlier recovery
+// fold so replaying the same events does not accumulate duplicates.
+func (runtime *Runtime) clearRecoveryIncidents() {
+	incidentMu.Lock()
+	defer incidentMu.Unlock()
+	filtered := runtime.incidents[:0]
+	for _, incident := range runtime.incidents {
+		if !strings.HasPrefix(incident.Message, recoveryIncidentPrefix) {
+			filtered = append(filtered, incident)
+		}
+	}
+	runtime.incidents = filtered
 }

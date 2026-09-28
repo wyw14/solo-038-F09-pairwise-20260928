@@ -73,3 +73,18 @@ func (coordinator *Coordinator) LastError() error {
 	defer coordinator.mu.Unlock()
 	return coordinator.lastError
 }
+
+// Restore rebuilds the released-interval ledger from durable records. Every
+// interval_committed row found on disk is treated as released (the append is
+// durable-before-acknowledged). Applying the same records again produces the
+// same ledger: records are keyed by job and interval identity.
+func (coordinator *Coordinator) Restore(records []journal.IntervalRecord) {
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	coordinator.lastError = nil
+	coordinator.released = map[model.JobID]journal.IntervalRecord{}
+	for _, record := range records {
+		record.Released = true
+		coordinator.released[record.Interval.JobID] = record
+	}
+}

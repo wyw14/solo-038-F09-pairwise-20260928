@@ -84,6 +84,9 @@ func (runtime *Runtime) loadRollOperation(current model.Job) error {
 	if err := runtime.jobs.Put(updated); err != nil {
 		return err
 	}
+	if _, err := journal.PersistJobSnapshot(runtime.journal, updated, model.NewOperationID(), now); err != nil {
+		return err
+	}
 	return runtime.webControl.Prepare(string(updated.ID), updated.Generation, updated.RollGeneration)
 }
 
@@ -164,12 +167,22 @@ func (runtime *Runtime) stopPressOperation(current model.Job) error {
 
 func (runtime *Runtime) registerOperation(current model.Job) error {
 	now := time.Now()
-	plateGeneration, err := runtime.pressControl.ChangePlate(string(model.NewOperationID()))
+	plateID := string(model.NewOperationID())
+	plateGeneration, err := runtime.pressControl.ChangePlate(plateID)
 	if err != nil {
 		return err
 	}
 	current.PlateGeneration = plateGeneration
+	if err := runtime.jobs.Put(current); err != nil {
+		return err
+	}
+	if _, err := journal.PersistPlate(runtime.journal, current, model.NewOperationID(), journal.PlateRecord{Plate: plateID, PlateGeneration: plateGeneration}, now); err != nil {
+		return err
+	}
 	if err := runtime.register.Start(current.Generation, plateGeneration, 0, now); err != nil {
+		return err
+	}
+	if _, err := journal.PersistRegisterWindow(runtime.journal, current, model.NewOperationID(), journal.RegisterWindowRecord{JobGeneration: current.Generation, PlateGeneration: plateGeneration, StartMeter: 0}, now); err != nil {
 		return err
 	}
 	frame := sensor.CameraFrame{ID: string(model.NewOperationID()), Camera: "register-camera", JobGeneration: current.Generation, PlateGeneration: plateGeneration, WebMeter: 1, Offset: 0.04, CapturedAt: now, ReceivedAt: now.Add(time.Millisecond)}
@@ -230,11 +243,15 @@ func (runtime *Runtime) switchInkOperation(withFault bool) error {
 }
 
 func (runtime *Runtime) startDryerOperation(ctx context.Context, current model.Job) error {
+	now := time.Now()
 	profile := dryer.Profile{Name: "production", Zones: []dryer.Zone{{Name: "entry", Temperature: 80, Airflow: 20}, {Name: "exit", Temperature: 100, Airflow: 24}}}
 	if profile.MaximumTemperature() <= 0 || profile.AverageAirflow() <= 0 {
 		return fmt.Errorf("dryer profile is invalid")
 	}
 	if err := runtime.dryerControl.Startup(nil, true); err != nil {
+		return err
+	}
+	if _, err := journal.PersistDryerStart(runtime.journal, current, model.NewOperationID(), journal.DryerStartRecord{Generation: current.Generation, Target: profile.MaximumTemperature(), Profile: "production"}, now); err != nil {
 		return err
 	}
 	if err := runtime.jobControl.StartDryerRamp(ctx, current, profile.MaximumTemperature(), 10*time.Millisecond); err != nil {
@@ -315,23 +332,11 @@ func (runtime *Runtime) recoveryOperation(current model.Job) error {
 	if err := runtime.SaveSnapshot(); err != nil {
 		return err
 	}
-	if _, err := runtimeLoadSnapshot(runtime.config.DataDir); err != nil {
-		return err
-	}
-	recovered := journal.RecoveredState{Job: current, Owner: string(current.ID)}
-	decision, err := job.DecideRecovery(recovered)
+	events, err := runtime.journal.Events()
 	if err != nil {
 		return err
 	}
-	recoveredJobs := job.NewState()
-	if err := job.RestoreState(recoveredJobs, decision); err != nil {
-		return err
-	}
-	if _, err := runtime.RecoverFeed(recovered, 5); err != nil {
-		return err
-	}
-	_ = web.Capture(runtime.web)
-	return nil
+	return runtime.RestartRecovery(events)
 }
 
 func (runtime *Runtime) diagnosticsOperation(ctx context.Context, current model.Job) error {

@@ -56,6 +56,7 @@ type Runtime struct {
 	splice          *splice.State
 	spliceControl   *splice.Coordinator
 	incidents       []Incident
+	recoveryReport  *RecoveryReport
 }
 
 func NewRuntime(config Config) (*Runtime, error) {
@@ -95,15 +96,26 @@ func (runtime *Runtime) Start(ctx context.Context) error {
 		return ctx.Err()
 	default:
 	}
-	if _, ok := runtime.jobs.Current(); !ok {
+	// On a cold start there is no durable history: create the first job.
+	// With durable history, reconstruct state from the journal instead of
+	// minting a new job that would shadow the pre-outage work.
+	events, err := runtime.journal.Events()
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
 		created := runtime.jobs.Create(time.Now())
 		created.RollGeneration = 1
 		created.PlateGeneration = 1
 		if err := runtime.jobs.Put(created); err != nil {
 			return err
 		}
+		if _, err := journal.PersistJobCreated(runtime.journal, created, model.NewOperationID(), time.Now()); err != nil {
+			return err
+		}
+		return nil
 	}
-	return nil
+	return runtime.RestartRecovery(events)
 }
 
 func (runtime *Runtime) Healthy() bool {
